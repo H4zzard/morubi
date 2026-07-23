@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="#12B866">
+  <!--
+    Variante SIMPLIFICADA da marca, para tamanhos pequenos (favicon, ícone 16/32
+    da extensão). A marca completa (logo-mark.svg) tem gregas e pontos finos que
+    viram borrão abaixo de ~48px, então aqui ficam só os elementos que
+    identificam o Morubi: losango com ponto, "M" e a escada da pirâmide.
+  -->
+  <!-- Losango do topo -->
+  <path d="M50 8 L59 17 L50 26 L41 17 Z M50 14 L53 17 L50 20 L47 17 Z" fill-rule="evenodd"/>
+  <rect x="48.5" y="25" width="3" height="5"/>
+  <!-- Losango central com ponto -->
+  <path d="M50 29 L68 45 L50 61 L32 45 Z M50 38 L58 45 L50 52 L42 45 Z" fill-rule="evenodd"/>
+  <circle cx="50" cy="45" r="4.6"/>
+  <!-- "M" -->
+  <path d="M31 92 L31 58 L50 70 L69 58 L69 92"
+        fill="none" stroke="#12B866" stroke-width="7.5" stroke-linejoin="miter" stroke-linecap="butt"/>
+  <!-- Escada da pirâmide (esquerda + espelhada) -->
+  <path d="M5 92 L5 78 L15 78 L15 64 L24 64"
+        fill="none" stroke="#12B866" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"/>
+  <path d="M95 92 L95 78 L85 78 L85 64 L76 64"
+        fill="none" stroke="#12B866" stroke-width="6" stroke-linejoin="miter" stroke-linecap="butt"/>
+</svg>

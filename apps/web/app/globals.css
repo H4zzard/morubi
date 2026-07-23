@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-graphite-950 text-ink-100 antialiased;
+  font-feature-settings: "cv11", "ss01";
+  /* Brilho verde sutil no topo, como nos mockups do produto. */
+  background-image:
+    radial-gradient(60rem 30rem at 50% -12rem, rgba(18, 184, 102, 0.07), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* Scrollbar sutil no tema graphite */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-graphite-600 rounded-full;
+}
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}

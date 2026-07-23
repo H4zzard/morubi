@@ -1,0 +1,251 @@
+// ============================================================================
+// Morubi — Schema de dados ÚNICO (fonte da verdade de todo "shape" de dado).
+// Web, extensão e API derivam seus tipos daqui. Não redeclare em outro lugar.
+// A coluna `embedding` (pgvector) é adicionada por migration SQL manual
+// (Prisma não modela vector nativamente) — ver prisma/migrations.
+// ============================================================================
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+  // "native" para dev local (Windows/Mac); "rhel-openssl-3.0.x" é o runtime das
+  // funções serverless da Vercel — sem isso o Prisma Client não acha o query
+  // engine em produção e toda rota de API quebra (erro clássico de deploy).
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
+}
+
+model Tenant {
+  id              String          @id @default(cuid())
+  name            String
+  segment         String?
+  /// Dias da semana (0=domingo ... 6=sábado) em que o Morubi gera o coaching
+  /// automático de cada vendedor. Vazio = só geração manual ("gerar agora").
+  coachingDays    Int[]           @default([])
+  createdAt       DateTime        @default(now())
+  users           User[]
+  knowledgeItems  KnowledgeItem[]
+  conversations   Conversation[]
+  corrections     Correction[]
+  invites         Invite[]
+  contactMemories ContactMemory[]
+  coachingReports CoachingReport[]
+}
+
+enum Role {
+  GESTOR
+  VENDEDOR
+}
+
+model User {
+  id            String         @id // = id do usuário no Supabase Auth
+  tenantId      String
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role          Role
+  name          String
+  email         String         @unique
+  createdAt     DateTime       @default(now())
+  conversations Conversation[]
+  corrections   Correction[]
+
+  @@index([tenantId])
+}
+
+// Convite pendente de vendedor (criado pelo gestor antes do primeiro login).
+model Invite {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  email     String
+  role      Role     @default(VENDEDOR)
+  name      String
+  accepted  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([tenantId, email])
+  @@index([email])
+}
+
+model KnowledgeItem {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  title     String
+  content   String
+  // embedding vector(1536) — coluna pgvector adicionada via migration SQL.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+enum Outcome {
+  EM_ABERTO
+  GANHA
+  PERDIDA
+}
+
+model Conversation {
+  id          String              @id @default(cuid())
+  tenantId    String
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel     String // "whatsapp_web" | "kentro"
+  externalKey String? // identificador estável do chat no canal (telefone/nome do lead)
+  leadName    String?
+  outcome     Outcome             @default(EM_ABERTO)
+  /// Valor do negócio em centavos (opcional) — alimenta receita projetada/em risco.
+  dealValue   Int?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  messages    Message[]
+  suggestions Suggestion[]
+  chat        CopilotChatMessage[]
+
+  @@unique([userId, channel, externalKey])
+  @@index([tenantId])
+  @@index([userId])
+}
+
+enum Sender {
+  CLIENTE
+  VENDEDOR
+}
+
+enum MsgType {
+  TEXTO
+  AUDIO
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         Sender
+  type           MsgType
+  content        String // texto, ou transcrição se for áudio
+  externalId     String? // id/hash da mensagem no canal (dedupe)
+  timestamp      DateTime
+
+  @@unique([conversationId, externalId])
+  @@index([conversationId])
+}
+
+model Suggestion {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  stage          String
+  probability    Int
+  nextAction     String
+  objection      String?
+  objectionReply String?
+  usefulFeedback Boolean?
+  /// Erros do vendedor detectados nesta análise (ver SellerMistake em @morubi/api-client).
+  /// Alimenta o card "Erros mais comuns" do dashboard do gestor.
+  mistakes       String[]     @default([])
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+enum CorrectionScope {
+  VENDEDOR
+  TENANT
+}
+
+model Correction {
+  id         String          @id @default(cuid())
+  tenantId   String
+  tenant     Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scope      CorrectionScope @default(VENDEDOR)
+  original   String
+  corrected  String
+  approvedBy String?
+  createdAt  DateTime        @default(now())
+
+  @@index([tenantId])
+  @@index([userId])
+}
+
+/// ============================================================================
+/// Memória evolutiva POR CONTATO (não por conversa).
+/// Chaveada por (tenant, canal, contato) para que o histórico do lead sobreviva
+/// mesmo se a conversa for reaberta, trocar de vendedor ou mudar de canal.
+/// A cada /analyze a IA recebe esta memória e devolve uma versão ATUALIZADA
+/// (acumula, não reinicia).
+/// ============================================================================
+model ContactMemory {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  channel     String
+  externalKey String
+  leadName    String?
+  /// Resumo corrido do relacionamento com este contato (reescrito a cada análise).
+  summary     String   @default("")
+  /// Fatos objetivos e duráveis (ex.: "orçamento até R$ 500/mês", "decisor é o sócio").
+  keyFacts    String[] @default([])
+  /// Quantas análises já alimentaram esta memória.
+  analysisCount Int    @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, channel, externalKey])
+  @@index([tenantId])
+}
+
+enum ChatRole {
+  VENDEDOR
+  ASSISTENTE
+}
+
+/// Chat livre entre o vendedor e o Morubi dentro do side panel — tira dúvidas e
+/// é também o canal de correção (a IA detecta quando a mensagem é uma correção
+/// e grava um Correction correspondente).
+model CopilotChatMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           ChatRole
+  content        String
+  /// Marca a mensagem que gerou uma correção persistida.
+  correctionId   String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+/// Relatório de coaching de um vendedor num período — o que ele está acertando,
+/// errando e como melhorar, no estilo de um coordenador comercial. Gerado
+/// manualmente pelo gestor ou automaticamente nos dias configurados (coachingDays).
+model CoachingReport {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Vendedor analisado. Sem relation (mantém o relatório mesmo se o vendedor
+  /// for removido); guardamos o nome no momento da geração.
+  userId      String
+  userName    String
+  periodStart DateTime
+  periodEnd   DateTime
+  /// Texto do relatório (markdown simples).
+  content     String
+  /// Nº de conversas analisadas no período (0 = "sem atividade").
+  conversationsAnalyzed Int @default(0)
+  /// "manual" | "auto"
+  source      String   @default("manual")
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([tenantId, userId])
+}

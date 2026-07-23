@@ -1,0 +1,29 @@
+{
+  "name": "morubi",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @morubi/db generate",
+    "db:migrate": "pnpm --filter @morubi/db migrate",
+    "db:push": "pnpm --filter @morubi/db push",
+    "db:seed": "pnpm --filter @morubi/db seed"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.2",
+    "prettier": "^3.4.2"
+  },
+  "pnpm": {
+    "overrides": {
+      "@vitejs/plugin-react": "^4.3.4"
+    }
+  }
+}

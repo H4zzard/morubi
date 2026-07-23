@@ -1,0 +1,19 @@
+/* Variáveis CSS derivadas dos tokens — para uso direto onde Tailwind não alcança. */
+:root {
+  --graphite-950: #0b0f0e;
+  --graphite-900: #101614;
+  --graphite-800: #161d1b;
+  --graphite-700: #1e2724;
+  --graphite-600: #2a3531;
+
+  --brand-500: #12b866;
+  --brand-600: #0e9a55;
+
+  --ink-100: #f4f6f5;
+  --ink-300: #aab4b0;
+  --ink-500: #586b64;
+
+  --success: #12b866;
+  --warning: #e0b400;
+  --danger: #e05353;
+}
