@@ -64,44 +64,60 @@ function messageExternalId(row: Element, sender: string, text: string, timestamp
  */
 const rowByExternalId = new Map<string, Element>();
 
-/** Rótulos fixos da interface que aparecem no cabeçalho e não identificam o lead. */
-const HEADER_NOISE =
-  /contato sem etiquetas|sem protocolo|aberto a|^chat$|pesquisar|procurar|etiquetas?$/i;
+/** Linhas de rótulo do bloco do contato (ficam LOGO ABAIXO do nome). */
+const CONTACT_META = /protocolo|etiquetas?/i;
 
 /**
- * Nome ou telefone do contato, lido do topo da área da conversa.
- *
- * Varrer o DOM inteiro é caro (a página tem centenas de divs só nas ondas do
- * player), e isto roda a cada mutação. Por isso guardamos o elemento achado e
- * só refazemos a varredura quando ele sai da tela ou fica vazio.
+ * Elemento-âncora do bloco do contato. Guardamos só a âncora, nunca o nome:
+ * o nome é relido do DOM a cada chamada, senão a troca de conversa passaria
+ * despercebida (foi exatamente o bug de ficar preso no contato anterior).
  */
-let cachedHeaderEl: Element | null = null;
+let cachedAnchor: Element | null = null;
 
+/** Sobe a partir da âncora e devolve a primeira linha que não é rótulo: o nome. */
+function nameFromAnchor(anchor: Element): string | null {
+  let node: Element | null = anchor.parentElement;
+  for (let hop = 0; hop < 4 && node; hop++) {
+    for (const leaf of node.querySelectorAll("*")) {
+      if (leaf.children.length > 0) continue;
+      const t = textOf(leaf);
+      if (t.length < 2 || t.length > 60) continue;
+      if (CONTACT_META.test(t)) continue;
+      return t;
+    }
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Nome (ou telefone) do CONTATO, lido do cabeçalho da conversa.
+ *
+ * Cuidado que custou um bug: o topo da página também mostra o nome do AGENTE
+ * logado, à direita. Uma busca por "texto no topo da tela" pega o agente e não
+ * o contato. Por isso ancoramos nas linhas "Contato sem etiquetas"/"Sem
+ * protocolo", que só existem no bloco do contato, e subimos até o nome.
+ */
 function headerIdentity(): string | null {
-  if (cachedHeaderEl?.isConnected) {
-    const cached = textOf(cachedHeaderEl);
-    if (cached && !HEADER_NOISE.test(cached)) return cached;
+  if (cachedAnchor?.isConnected) {
+    const name = nameFromAnchor(cachedAnchor);
+    if (name) return name;
   }
 
-  const candidates: Element[] = [];
-  for (const el of document.querySelectorAll("span, div, h1, h2, h3, b, strong")) {
-    if (el.children.length > 0) continue; // só folhas de texto
+  for (const el of document.querySelectorAll("span, div, small, p")) {
+    if (el.children.length > 0) continue;
     const t = textOf(el);
-    if (t.length < 3 || t.length > 60) continue;
-    if (HEADER_NOISE.test(t)) continue;
+    if (!CONTACT_META.test(t) || t.length > 40) continue;
     const r = el.getBoundingClientRect();
-    // Faixa do cabeçalho, à direita da lista de conversas.
-    if (r.top < 0 || r.top > 140 || r.left < 300 || r.width === 0) continue;
-    candidates.push(el);
+    if (r.top < 0 || r.top > 220 || r.width === 0) continue; // faixa do cabeçalho
+
+    const name = nameFromAnchor(el);
+    if (name) {
+      cachedAnchor = el;
+      return name;
+    }
   }
-
-  // Telefone é a identidade mais confiável; nome é o segundo melhor.
-  const phoneEl = candidates.find((el) => /\+?\d[\d\s().-]{8,}/.test(textOf(el)));
-  const chosen = phoneEl ?? candidates[0];
-  if (!chosen) return null;
-
-  cachedHeaderEl = chosen;
-  return textOf(chosen);
+  return null;
 }
 
 /** Mensagem de voz? O Kentro renderiza o player mesmo antes do play. */
