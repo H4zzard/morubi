@@ -64,6 +64,46 @@ function messageExternalId(row: Element, sender: string, text: string, timestamp
  */
 const rowByExternalId = new Map<string, Element>();
 
+/** Rótulos fixos da interface que aparecem no cabeçalho e não identificam o lead. */
+const HEADER_NOISE =
+  /contato sem etiquetas|sem protocolo|aberto a|^chat$|pesquisar|procurar|etiquetas?$/i;
+
+/**
+ * Nome ou telefone do contato, lido do topo da área da conversa.
+ *
+ * Varrer o DOM inteiro é caro (a página tem centenas de divs só nas ondas do
+ * player), e isto roda a cada mutação. Por isso guardamos o elemento achado e
+ * só refazemos a varredura quando ele sai da tela ou fica vazio.
+ */
+let cachedHeaderEl: Element | null = null;
+
+function headerIdentity(): string | null {
+  if (cachedHeaderEl?.isConnected) {
+    const cached = textOf(cachedHeaderEl);
+    if (cached && !HEADER_NOISE.test(cached)) return cached;
+  }
+
+  const candidates: Element[] = [];
+  for (const el of document.querySelectorAll("span, div, h1, h2, h3, b, strong")) {
+    if (el.children.length > 0) continue; // só folhas de texto
+    const t = textOf(el);
+    if (t.length < 3 || t.length > 60) continue;
+    if (HEADER_NOISE.test(t)) continue;
+    const r = el.getBoundingClientRect();
+    // Faixa do cabeçalho, à direita da lista de conversas.
+    if (r.top < 0 || r.top > 140 || r.left < 300 || r.width === 0) continue;
+    candidates.push(el);
+  }
+
+  // Telefone é a identidade mais confiável; nome é o segundo melhor.
+  const phoneEl = candidates.find((el) => /\+?\d[\d\s().-]{8,}/.test(textOf(el)));
+  const chosen = phoneEl ?? candidates[0];
+  if (!chosen) return null;
+
+  cachedHeaderEl = chosen;
+  return textOf(chosen);
+}
+
 /** Mensagem de voz? O Kentro renderiza o player mesmo antes do play. */
 function isAudioMessage(row: Element): boolean {
   return !!row.querySelector(`audio, ${SEL.audioPlayer}`);
@@ -171,12 +211,41 @@ export const kentroAdapter: ChannelAdapter = {
     return url.includes("atenderbem.com");
   },
 
+  /**
+   * Identidade da conversa aberta, em camadas — porque nem todo canal do
+   * Kentro tem as mesmas pistas:
+   *   1. wamid  -> telefone (WhatsApp oficial; melhor caso)
+   *   2. cabeçalho -> telefone ou nome do contato (Meta Ads, Instagram etc.)
+   *   3. hash da mensagem mais antiga visível (último recurso)
+   * A camada 3 existe para o painel NUNCA ficar preso em "abra uma conversa"
+   * quando as mensagens estão claramente na tela.
+   */
   getActiveChat(): ActiveChat | null {
-    const first = document.querySelector('[id^="wamid."]');
-    if (!first) return null;
-    const phone = phoneFromWamid(first.id);
-    if (!phone) return null;
-    return { externalKey: phone, leadName: formatPhone(phone) };
+    const rows = document.querySelectorAll(SEL.message);
+    if (rows.length === 0) return null; // nenhuma conversa aberta de fato
+
+    // 1. wamid (traz o telefone real embutido)
+    const wamidEl = document.querySelector('[id^="wamid."]');
+    if (wamidEl) {
+      const phone = phoneFromWamid(wamidEl.id);
+      if (phone) return { externalKey: phone, leadName: formatPhone(phone) };
+    }
+
+    // 2. cabeçalho da conversa
+    const header = headerIdentity();
+    if (header) {
+      const digits = header.replace(/\D/g, "");
+      // Se o cabeçalho é um telefone, normaliza para casar com a chave do wamid.
+      if (digits.length >= 10 && digits.length <= 15) {
+        return { externalKey: digits, leadName: formatPhone(digits) };
+      }
+      return { externalKey: header, leadName: header };
+    }
+
+    // 3. último recurso: a mensagem mais antiga visível é o que menos muda.
+    const oldest = rows[0]!;
+    const fingerprint = hashId(textOf(oldest).slice(0, 200));
+    return { externalKey: `kentro-${fingerprint}`, leadName: null };
   },
 
   getMessages(): ObservedMessage[] {
