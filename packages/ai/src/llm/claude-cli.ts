@@ -102,9 +102,15 @@ function baseArgs(system: string): string[] {
     // Geração pura: sem Bash/Edit/Read, o CLI não deve tocar em nada.
     "--tools",
     "",
-    // Ignora CLAUDE.md, skills, hooks, plugins e MCP: a saída precisa depender
-    // só do nosso prompt, não da configuração pessoal de quem roda.
-    "--safe-mode",
+    // Isola a geração da configuração pessoal de quem roda.
+    //
+    // `--safe-mode` não existe no CLI 2.x. O substituto óbvio seria `--bare`,
+    // mas ele NÃO serve aqui: a doc dele diz que a auth passa a ser
+    // "strictly ANTHROPIC_API_KEY (OAuth and keychain are never read)", ou seja,
+    // desligaria justamente o login da assinatura que este driver existe para
+    // usar. Ficamos com o isolamento que não mexe em autenticação; a execução
+    // já roda num diretório temporário, então não há CLAUDE.md do projeto por perto.
+    "--strict-mcp-config",
     "--no-session-persistence",
   ];
 }
