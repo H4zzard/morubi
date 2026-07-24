@@ -37,6 +37,33 @@ function textOf(el: Element | null): string {
   return (el?.textContent ?? "").trim();
 }
 
+/** Hash estável (djb2) para identificar mensagem sem id próprio. */
+function hashId(input: string): string {
+  let h = 5381;
+  for (let i = 0; i < input.length; i++) h = (h * 33) ^ input.charCodeAt(i);
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Identificador estável da mensagem, para dedupe.
+ *
+ * Nem toda mensagem do Kentro tem `id="wamid...."`: isso aparece nas que vêm
+ * pela API oficial do WhatsApp, mas conversas de outros canais (Meta Ads,
+ * Instagram) chegam sem id nenhum. Exigir o wamid fazia TODAS as mensagens
+ * dessas conversas serem descartadas, então caímos para um hash do conteúdo.
+ */
+function messageExternalId(row: Element, sender: string, text: string, timestamp: string): string {
+  if (row.id) return row.id;
+  return `k-${hashId(`${sender}|${timestamp}|${text}`)}`;
+}
+
+/**
+ * externalId -> elemento da bolha, preenchido em getMessages(). Necessário
+ * porque o id gerado por hash não existe no DOM, então captureAudioBlob() não
+ * conseguiria reencontrar a mensagem por seletor.
+ */
+const rowByExternalId = new Map<string, Element>();
+
 /** Mensagem de voz? O Kentro renderiza o player mesmo antes do play. */
 function isAudioMessage(row: Element): boolean {
   return !!row.querySelector(`audio, ${SEL.audioPlayer}`);
@@ -154,10 +181,9 @@ export const kentroAdapter: ChannelAdapter = {
 
   getMessages(): ObservedMessage[] {
     const messages: ObservedMessage[] = [];
+    rowByExternalId.clear();
 
     document.querySelectorAll(SEL.message).forEach((row) => {
-      if (!row.id.startsWith("wamid.")) return; // sem id estável -> ignora (ex.: aviso de sistema)
-
       const timestamp = parseTimeLabel(textOf(row.querySelector(SEL.timeLabel))) ?? new Date().toISOString();
 
       const isAudio = isAudioMessage(row);
@@ -170,8 +196,11 @@ export const kentroAdapter: ChannelAdapter = {
 
       if (!text && !isAudio) return;
 
+      const externalId = messageExternalId(row, sender, text, timestamp);
+      rowByExternalId.set(externalId, row);
+
       messages.push({
-        externalId: row.id,
+        externalId,
         sender,
         type: isAudio ? "audio" : "texto",
         text,
@@ -205,11 +234,12 @@ export const kentroAdapter: ChannelAdapter = {
    * herda a sessão e o download funciona.
    */
   async captureAudioBlob(externalId: string): Promise<Blob | null> {
-    // Cuidado: o Kentro repete o mesmo id no container de mídia interno, então
-    // buscamos explicitamente a bolha da mensagem.
+    // O índice cobre os ids gerados por hash (que não existem no DOM). O
+    // seletor é o fallback; nele, cuidado: o Kentro repete o mesmo id no
+    // container de mídia interno, por isso filtramos pela bolha.
     const row =
-      document.querySelector(`${SEL.message}[id="${CSS.escape(externalId)}"]`) ??
-      document.getElementById(externalId);
+      rowByExternalId.get(externalId) ??
+      document.querySelector(`${SEL.message}[id="${CSS.escape(externalId)}"]`);
     if (!row) return null;
 
     const url = audioSourceUrl(row);

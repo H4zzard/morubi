@@ -3,9 +3,24 @@
 import { resolveAdapter, MATCHED_HOST_PATTERNS } from "./adapters/registry";
 import type { ConversationUpdate, RuntimeMessage, WireMessage } from "@/lib/messaging";
 
+/**
+ * O background reinjeta este script nas abas já abertas (ver background.ts).
+ * Numa aba que já o tinha, isso rodaria o main() duas vezes e criaria dois
+ * MutationObserver enviando updates em dobro. A flag vive no mundo isolado do
+ * content script, que é compartilhado entre injeções na mesma aba.
+ */
+declare global {
+  interface Window {
+    __morubiContentLoaded?: boolean;
+  }
+}
+
 export default defineContentScript({
   matches: MATCHED_HOST_PATTERNS,
   async main() {
+    if (window.__morubiContentLoaded) return;
+    window.__morubiContentLoaded = true;
+
     const adapter = resolveAdapter(location.href);
     if (!adapter) return;
 
