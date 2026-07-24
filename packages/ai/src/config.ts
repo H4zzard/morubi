@@ -74,5 +74,18 @@ export function rethrowLlmError(err: unknown): never {
   if (msg.includes("rate limit") || msg.includes("overloaded") || msg.includes("529")) {
     throw new LlmError("A IA está sobrecarregada agora. Tente de novo em instantes.", 429);
   }
+  // --- Falhas específicas do provedor `cli` (dev local) ---
+  if (msg.includes("usage limit") || msg.includes("limite de uso")) {
+    throw new LlmError(
+      "A cota da assinatura do Claude CLI acabou. Espere a renovação ou use AI_PROVIDER=api.",
+      429,
+    );
+  }
+  if (msg.includes("not logged in") || msg.includes("/login") || msg.includes("please log in")) {
+    throw new LlmError(
+      "O Claude CLI não está autenticado. Rode `claude` no terminal e faça login.",
+      502,
+    );
+  }
   throw err;
 }

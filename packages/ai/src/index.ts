@@ -12,4 +12,5 @@ export { extractText, SUPPORTED_EXTENSIONS } from "./extract";
 export { stripDashes, stripDashesDeep } from "./sanitize";
 export { buildAnalysisContext } from "./rag";
 export { AI_CONFIG, LlmError, LlmTimeoutError } from "./config";
+export { llmObject, llmText, activeLlmProvider, type LlmProviderName } from "./llm";
 export type { RecentMessage, AnalysisContext, ContactMemorySnapshot } from "./rag";

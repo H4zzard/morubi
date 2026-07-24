@@ -2,10 +2,9 @@
 // Além de tirar dúvidas, é o canal de CORREÇÃO: a IA identifica quando a
 // mensagem do vendedor a está corrigindo e devolve a correção estruturada,
 // que a rota persiste como `Correction` (memória evolutiva).
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
 import { z } from "zod";
-import { AI_CONFIG, llmAbortSignal, rethrowLlmError } from "./config";
+import { rethrowLlmError } from "./config";
+import { llmObject } from "./llm";
 import { buildAnalysisContext, type RecentMessage } from "./rag";
 import { buildChatPrompt, CHAT_SYSTEM_PROMPT } from "./prompts";
 import { stripDashesDeep } from "./sanitize";
@@ -35,8 +34,7 @@ export async function chatWithCopilot(params: {
 }): Promise<CopilotChatResult> {
   const ctx = await buildAnalysisContext(params);
 
-  const { object } = await generateObject({
-    model: anthropic(AI_CONFIG.generationModel),
+  const object = await llmObject({
     schema: ChatReplySchema,
     system: CHAT_SYSTEM_PROMPT,
     prompt: buildChatPrompt({
@@ -45,7 +43,6 @@ export async function chatWithCopilot(params: {
       lastSuggestion: params.lastSuggestion,
       message: params.message,
     }),
-    abortSignal: llmAbortSignal(),
   }).catch(rethrowLlmError);
 
   const clean = stripDashesDeep(object);

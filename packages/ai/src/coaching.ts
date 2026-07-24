@@ -1,9 +1,8 @@
 // Relatório de coaching por vendedor, no estilo de um coordenador comercial.
 // Recebe as conversas do vendedor no período e devolve feedback específico:
 // o que está acertando, errando, e leads concretos para dar follow up.
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateText } from "ai";
-import { AI_CONFIG, llmAbortSignal, rethrowLlmError } from "./config";
+import { rethrowLlmError } from "./config";
+import { llmText } from "./llm";
 import { stripDashes } from "./sanitize";
 
 export interface CoachingConversationInput {
@@ -93,11 +92,9 @@ ${formatConversations(input.conversations)}
 
 Escreva o feedback de coaching para ${input.sellerName}.`;
 
-  const { text } = await generateText({
-    model: anthropic(AI_CONFIG.generationModel),
+  const text = await llmText({
     system: COACHING_SYSTEM_PROMPT,
     prompt,
-    abortSignal: llmAbortSignal(),
   }).catch(rethrowLlmError);
 
   return stripDashes(text.trim());

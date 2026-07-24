@@ -1,8 +1,7 @@
 // Orquestração da análise do copiloto: contexto (RAG + memória) -> 1 chamada estruturada.
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
 import { AnalysisSchema, type Analysis } from "@morubi/api-client";
-import { AI_CONFIG, llmAbortSignal, rethrowLlmError } from "./config";
+import { rethrowLlmError } from "./config";
+import { llmObject } from "./llm";
 import { buildAnalysisContext, type RecentMessage } from "./rag";
 import { buildAnalysisPrompt, SYSTEM_PROMPT } from "./prompts";
 import { stripDashesDeep } from "./sanitize";
@@ -15,7 +14,7 @@ export interface AnalyzeResult {
 }
 
 /**
- * Endpoint central do copiloto (lado IA). Uma única chamada `generateObject`
+ * Endpoint central do copiloto (lado IA). Uma única chamada estruturada
  * retorna estágio + probabilidade + próxima ação + objeção + erros + memória
  * atualizada. Não persiste nada (a rota grava Suggestion e ContactMemory) para
  * manter as escritas de banco na camada de API.
@@ -30,12 +29,10 @@ export async function analyzeConversation(params: {
 }): Promise<AnalyzeResult> {
   const ctx = await buildAnalysisContext(params);
 
-  const { object } = await generateObject({
-    model: anthropic(AI_CONFIG.generationModel),
+  const object = await llmObject({
     schema: AnalysisSchema,
     system: SYSTEM_PROMPT,
     prompt: buildAnalysisPrompt(ctx),
-    abortSignal: llmAbortSignal(),
   }).catch(rethrowLlmError);
 
   return {

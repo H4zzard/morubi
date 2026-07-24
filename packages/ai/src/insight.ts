@@ -1,7 +1,5 @@
 // Insight agregado do time para o dashboard do gestor.
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateText } from "ai";
-import { AI_CONFIG, llmAbortSignal } from "./config";
+import { llmText } from "./llm";
 import { INSIGHT_SYSTEM_PROMPT } from "./prompts";
 import { stripDashes } from "./sanitize";
 
@@ -51,12 +49,7 @@ ${sellers}
 Gere o insight para o gestor.`;
 
   try {
-    const { text } = await generateText({
-      model: anthropic(AI_CONFIG.generationModel),
-      system: INSIGHT_SYSTEM_PROMPT,
-      prompt,
-      abortSignal: llmAbortSignal(),
-    });
+    const text = await llmText({ system: INSIGHT_SYSTEM_PROMPT, prompt });
     const clean = stripDashes(text.trim());
     return clean || null;
   } catch (err) {
