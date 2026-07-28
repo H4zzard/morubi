@@ -14,6 +14,10 @@ export default defineConfig({
       // subdomínio próprio (ex.: mv8company.atenderbem.com) — liberamos o
       // domínio inteiro para não depender do subdomínio de um cliente só.
       "https://*.atenderbem.com/*",
+      // CRMs lidos pelo adaptador genérico (Z-Pro etc.). Z-Pro é auto-hospedado:
+      // cada empresa usa o próprio domínio. Mantenha em sincronia com
+      // GENERIC_CRM_HOSTS (generic-chat.ts).
+      "https://atendimento.cppem.com.br/*",
       // API em produção: cobre a URL padrão da Vercel out-of-the-box. Se usar
       // domínio próprio (ex.: app.morubi.com), troque por "https://app.morubi.com/*".
       "https://*.vercel.app/*",

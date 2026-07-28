@@ -52,11 +52,14 @@ export default defineContentScript({
     }
 
     async function pushUpdate() {
+      const messages = await toWire();
       const update: ConversationUpdate = {
         type: "MORUBI_CONVERSATION_UPDATE",
         channel: adapter!.id,
         chat: adapter!.getActiveChat(),
-        messages: await toWire(),
+        messages,
+        // Adaptador específico (sem confidence) = leitura confiável por design.
+        confidence: adapter!.confidence ? adapter!.confidence() : 1,
       };
       chrome.runtime.sendMessage(update).catch(() => {
         /* side panel pode estar fechado */

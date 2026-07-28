@@ -4,7 +4,17 @@ import { api } from "@/lib/api";
 import type { ConversationUpdate, RuntimeMessage, WireMessage } from "@/lib/messaging";
 import type { ActiveChat } from "@/entrypoints/content/adapters/types";
 
-export type CopilotStatus = "idle" | "no-chat" | "syncing" | "analyzing" | "ready" | "error";
+export type CopilotStatus =
+  | "idle"
+  | "no-chat"
+  | "syncing"
+  | "analyzing"
+  | "ready"
+  | "error"
+  | "uncertain";
+
+/** Abaixo disso, a leitura da conversa é duvidosa e não alimentamos a IA sozinhos. */
+const MIN_CONFIDENCE = 0.35;
 
 interface CopilotState {
   status: CopilotStatus;
@@ -46,6 +56,9 @@ export function useCopilot() {
   const seen = useRef<Set<string>>(new Set());
   const inFlight = useRef(false);
   const pending = useRef<ConversationUpdate | null>(null);
+  // Último update recebido + se o vendedor mandou "analisar mesmo assim".
+  const lastUpdate = useRef<ConversationUpdate | null>(null);
+  const forced = useRef(false);
   // Rastreado à parte de `state` (que fica "congelado" dentro do useCallback
   // com deps vazias) para saber, sem closure obsoleto, se já existe sugestão.
   const hasSuggestion = useRef(false);
@@ -56,12 +69,21 @@ export function useCopilot() {
   const settled = useRef(false);
 
   const process = useCallback(async (update: ConversationUpdate) => {
+    lastUpdate.current = update;
     if (inFlight.current) {
       pending.current = update; // coalescer o último
       return;
     }
     inFlight.current = true;
     try {
+      // Leitura duvidosa (adaptador genérico inseguro): não alimentamos a IA
+      // automaticamente — o vendedor pode forçar. Adaptador específico manda
+      // confidence 1, então isto nunca dispara para WhatsApp/Kentro.
+      if (update.chat && update.confidence < MIN_CONFIDENCE && !forced.current && !settled.current) {
+        patch({ status: "uncertain", chat: update.chat });
+        return;
+      }
+
       if (!update.chat) {
         currentKey.current = null;
         conversationId.current = null;
@@ -96,6 +118,7 @@ export function useCopilot() {
         seen.current.clear();
         hasSuggestion.current = false;
         settled.current = false;
+        forced.current = false; // nova conversa volta a exigir confiança
         // Se essa conversa já tinha um desfecho registrado antes (o vendedor
         // reabriu um chat já fechado), refletimos isso no painel em vez de
         // deixar parecer que nada foi marcado ainda.
@@ -199,6 +222,13 @@ export function useCopilot() {
     }
   }, []);
 
+  /** "Analisar mesmo assim": ignora o aviso de leitura incerta. */
+  const forceAnalyze = useCallback(() => {
+    forced.current = true;
+    if (lastUpdate.current) void process(lastUpdate.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [process]);
+
   // Registra o desfecho da conversa ATUAL (por id explícito, nunca "a última
   // que resolveu" — evita marcar a conversa errada caso o vendedor troque de
   // chat rápido demais entre o clique e a resposta da API).
@@ -216,7 +246,13 @@ export function useCopilot() {
     [],
   );
 
-  return { state, reanalyze, markOutcome, lastClientMessage: state.lastClientMessage };
+  return {
+    state,
+    reanalyze,
+    markOutcome,
+    forceAnalyze,
+    lastClientMessage: state.lastClientMessage,
+  };
 }
 
 async function requestSnapshot() {

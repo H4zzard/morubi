@@ -19,7 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 type Tab = "copiloto" | "chat";
 
 export function Copilot() {
-  const { state, reanalyze, markOutcome, lastClientMessage } = useCopilot();
+  const { state, reanalyze, markOutcome, forceAnalyze, lastClientMessage } = useCopilot();
   const { suggestion, status } = state;
   const chat = useChat(state.conversationId);
 
@@ -112,7 +112,26 @@ export function Copilot() {
       ) : (
         <>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {showStatus && (
+            {status === "uncertain" && (
+              <div className="mt-10 px-4 text-center">
+                <span className="text-2xl" aria-hidden="true">🧐</span>
+                <p className="mt-2 text-sm text-ink-200">
+                  Não consegui ler esta conversa com segurança
+                </p>
+                <p className="mx-auto mt-1 max-w-[16rem] text-xs leading-relaxed text-ink-500">
+                  Este CRM ainda não é totalmente reconhecido, então prefiro não arriscar uma
+                  análise errada. Você pode analisar mesmo assim.
+                </p>
+                <button
+                  onClick={() => forceAnalyze()}
+                  className="mt-4 rounded-lg bg-brand-500 px-3.5 py-2 text-xs font-medium text-graphite-950 transition-colors hover:bg-brand-400"
+                >
+                  Analisar mesmo assim
+                </button>
+              </div>
+            )}
+
+            {showStatus && status !== "uncertain" && (
               <div className="mt-10 px-4 text-center">
                 <p className="text-sm text-ink-400">{STATUS_LABEL[status]}</p>
                 {status === "error" && state.error && (

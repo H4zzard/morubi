@@ -5,8 +5,11 @@
 import type { ChannelAdapter } from "./types";
 import { whatsappWebAdapter } from "./whatsapp-web";
 import { kentroAdapter } from "./kentro";
+import { genericChatAdapter } from "./generic-chat";
 
-const ADAPTERS: ChannelAdapter[] = [whatsappWebAdapter, kentroAdapter];
+// Ordem importa: adaptadores ESPECÍFICOS (seletores afinados) primeiro; o
+// genérico é o ÚLTIMO, como fallback para CRMs que não têm adaptador próprio.
+const ADAPTERS: ChannelAdapter[] = [whatsappWebAdapter, kentroAdapter, genericChatAdapter];
 
 export function resolveAdapter(url: string): ChannelAdapter | null {
   return ADAPTERS.find((a) => a.matches(url)) ?? null;

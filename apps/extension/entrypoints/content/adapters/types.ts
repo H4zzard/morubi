@@ -44,4 +44,12 @@ export interface ChannelAdapter {
    * precisa implementar (ex.: se não há mensagem de voz no canal).
    */
   captureAudioBlob?(externalId: string): Promise<Blob | null>;
+  /**
+   * Confiança da última leitura (0..1). Adaptadores específicos (seletores
+   * afinados à mão) leem com certeza e não precisam implementar — nesse caso
+   * a leitura é tratada como alta confiança. O adaptador genérico, que INFERE
+   * a estrutura, informa aqui o quão seguro está, para o painel avisar em vez
+   * de alimentar a IA com uma leitura duvidosa.
+   */
+  confidence?(): number;
 }

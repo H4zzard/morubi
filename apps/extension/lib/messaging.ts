@@ -18,6 +18,8 @@ export interface ConversationUpdate {
   channel: Channel;
   chat: ActiveChat | null;
   messages: WireMessage[];
+  /** Confiança 0..1 da leitura desta conversa (1 = adaptador específico). */
+  confidence: number;
 }
 
 // Side panel -> content: pedido de snapshot imediato.

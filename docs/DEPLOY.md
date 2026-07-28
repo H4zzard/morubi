@@ -1,18 +1,45 @@
 # Deploy do Morubi
 
-Guia de produção: o **web/API** vai para a **Vercel** e a **extensão** para a **Chrome Web Store**.
-O banco/auth continua no **Supabase**.
+Guia de produção: o **web/API** roda numa **VM Ubuntu na DigitalOcean** e a **extensão** vai para a
+**Chrome Web Store**. O banco/auth continua no **Supabase**.
 
-> O código já está preparado para deploy (Prisma com binário da Vercel, `vercel.json`,
-> build de produção da extensão, página `/privacy`). Os passos abaixo são as ações que
-> dependem das suas contas.
+> Vantagem de rodar na sua própria VM: **não existe limite de tempo de função**. As chamadas de IA
+> (analyze/chat/transcribe) levam 20-40s e rodam sem cortar, diferente da Vercel (que exigiria o
+> plano Pro). Em compensação, você cuida do servidor (Node, Nginx, HTTPS, cron).
+
+---
+
+## 0. Máquina na DigitalOcean (o essencial)
+
+**Sistema:** Ubuntu 24.04 LTS.
+
+O Morubi web **não é pesado de CPU** — o trabalho duro (a IA) acontece nas APIs da Anthropic e do
+Google, o servidor só espera a resposta. O que consome recurso é o **build** do Next.js (o
+`next build` é guloso de memória). Então o gargalo é RAM, não processador.
+
+| Perfil | Droplet | Para quê |
+|---|---|---|
+| **Mínimo** | 1 vCPU · **2 GB RAM** · 50 GB SSD | Funciona, mas o build é lento e exige **swap** (passo 3.2). Abaixo de 2 GB o `next build` dá OOM (mata o processo). |
+| **Recomendado** | 2 vCPU · **4 GB RAM** · 80 GB SSD | Build tranquilo e folga para picos de atendimento simultâneo. É o que eu recomendo. |
+
+Na DigitalOcean isso é o plano **Basic (Shared CPU)** — a opção de 4 GB/2 vCPU costuma ficar em
+torno de US$ 24/mês (confira o preço atual). Disco: o projeto (node_modules + build) ocupa poucos
+GB; 50 GB já sobra.
+
+**Região:** a DigitalOcean não tem datacenter no Brasil. O banco (Supabase) está em São Paulo
+(`sa-east-1`), e o servidor conversa bastante com ele, então escolha a região de **menor latência
+até o Supabase** entre as disponíveis (NYC costuma ser um meio-termo razoável). Não é bloqueante,
+mas afeta a velocidade percebida.
+
+**Extras que você vai querer no droplet:** um **domínio** apontando para o IP (ex.:
+`app.morubi.com.br`) — necessário para o HTTPS e para os links de e-mail do Supabase.
 
 ---
 
 ## 1. Supabase de produção
 
-Você pode **reusar o projeto atual** ou criar um separado para produção (recomendado ter
-`dev` e `prod` separados). Para cada ambiente:
+Você pode **reusar o projeto atual** ou criar um separado para produção (recomendado ter `dev` e
+`prod` separados). Para cada ambiente:
 
 1. **Migrations**: com a `DATABASE_URL`/`DIRECT_URL` do ambiente no seu `.env.local`, rode:
    ```bash
@@ -26,55 +53,167 @@ Você pode **reusar o projeto atual** ou criar um separado para produção (reco
 
 ---
 
-## 2. Vercel (web + API)
+## 2. Preparar o servidor (uma vez)
 
-1. Suba o repositório no GitHub (monorepo inteiro).
-2. Em vercel.com → **Add New → Project** → importe o repositório.
-3. **Root Directory**: selecione `apps/web`.
-4. Em **Settings → General**, ative **"Include files outside of the Root Directory in the
-   Build Step"** (necessário porque o app importa `../../packages`).
-5. **Environment Variables** (Production): adicione todas:
-   ```
-   DATABASE_URL
-   DIRECT_URL
-   NEXT_PUBLIC_SUPABASE_URL
-   NEXT_PUBLIC_SUPABASE_ANON_KEY
-   SUPABASE_SERVICE_ROLE_KEY
-   ANTHROPIC_API_KEY
-   GEMINI_API_KEY
-   ```
-6. **Deploy**. O `vercel.json` já define o build (`pnpm run build`, que roda `prisma generate`
-   antes do `next build`) e o timeout das rotas de IA.
+Conecte por SSH como root e instale o básico.
 
-> ⚠️ **Plano da Vercel**: as rotas `/analyze`, `/chat` e `/transcribe` chamam a LLM e podem
-> levar 20-40s. O plano **Hobby limita funções a ~10-60s** e pode cortar essas chamadas. Para
-> produção estável use o plano **Pro** (permite até 300s). Em teste, se a análise cortar por
-> timeout, é isso.
+### 2.1 Usuário, firewall e fuso
+```bash
+adduser morubi && usermod -aG sudo morubi        # usuário sem ser root
+ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw enable
+timedatectl set-timezone America/Sao_Paulo        # cron do coaching no horário certo
+```
 
-Ao final você terá uma URL tipo `https://morubi-xxxx.vercel.app` (ou seu domínio próprio).
+### 2.2 Node 20 + pnpm + Nginx + Git
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs nginx git
+sudo corepack enable && sudo corepack prepare pnpm@9.15.0 --activate
+```
 
 ---
 
-## 3. Extensão (Chrome Web Store)
+## 3. Subir a aplicação
 
-### 3.1 Build de produção
+Faça como o usuário `morubi` (não root).
+
+### 3.1 Clonar e configurar o ambiente
+```bash
+sudo mkdir -p /opt/morubi && sudo chown morubi:morubi /opt/morubi
+git clone https://github.com/H4zzard/morubi.git /opt/morubi
+cd /opt/morubi
+```
+
+Crie **`apps/web/.env.local`** com TODAS as variáveis (é lido tanto no build quanto em runtime;
+as `NEXT_PUBLIC_*` são embutidas no build, por isso precisam existir ANTES de buildar):
+```
+DATABASE_URL=postgresql://...6543...?pgbouncer=true&connection_limit=30&pool_timeout=60
+DIRECT_URL=postgresql://...5432...
+NEXT_PUBLIC_SUPABASE_URL=https://SEU-REF.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=...
+AI_PROVIDER=api
+CRON_SECRET=uma-frase-secreta-qualquer
+# opcionais (observabilidade):
+# SENTRY_DSN=...
+# NEXT_PUBLIC_SENTRY_DSN=...
+```
+
+> `AI_PROVIDER=api` é **obrigatório em produção** (o código bloqueia `cli`/`mock` fora do dev).
+
+### 3.2 (Só na máquina de 2 GB) criar swap para o build não morrer
+```bash
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 3.3 Instalar, migrar e buildar
+```bash
+cd /opt/morubi
+pnpm install --frozen-lockfile
+pnpm db:migrate                          # aplica as migrations no Supabase
+pnpm --filter @morubi/web build          # roda prisma generate + next build
+```
+
+O Prisma gera o binário nativo do próprio Ubuntu no `generate`, então não precisa mexer em
+`binaryTargets`.
+
+### 3.4 Rodar como serviço (systemd)
+Crie `/etc/systemd/system/morubi.service`:
+```ini
+[Unit]
+Description=Morubi web/API
+After=network.target
+
+[Service]
+Type=simple
+User=morubi
+WorkingDirectory=/opt/morubi/apps/web
+# Aponta direto para o binário do Next (não depende do pnpm no PATH do systemd).
+ExecStart=/opt/morubi/apps/web/node_modules/.bin/next start -p 3000
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now morubi
+sudo systemctl status morubi          # deve estar "active (running)"
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/   # espera 307
+```
+
+### 3.5 Nginx como proxy reverso + HTTPS
+Crie `/etc/nginx/sites-available/morubi`:
+```nginx
+server {
+    server_name app.SEU-DOMINIO.com.br;
+    client_max_body_size 25m;              # uploads de arquivo/áudio
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;           # análises longas não podem cortar
+    }
+}
+```
+```bash
+sudo ln -s /etc/nginx/sites-available/morubi /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+# HTTPS grátis (Let's Encrypt):
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d app.SEU-DOMINIO.com.br
+```
+
+Pronto: o app fica em `https://app.SEU-DOMINIO.com.br`.
+
+### 3.6 Coaching automático (cron do sistema)
+A execução agendada do coaching (que na Vercel seria um "cron job") aqui é um **crontab**. Ele bate
+diariamente no endpoint, que decide sozinho se hoje é um dos dias escolhidos pelo gestor.
+```bash
+crontab -e
+# adicione (8h, fuso já é São Paulo):
+0 8 * * * curl -s -X GET https://app.SEU-DOMINIO.com.br/api/cron/coaching -H "Authorization: Bearer SUA-CRON-SECRET"
+```
+
+### 3.7 Atualizar o Morubi depois (novo deploy)
+```bash
+cd /opt/morubi && git pull
+pnpm install --frozen-lockfile
+pnpm db:migrate                    # se houver migration nova
+pnpm --filter @morubi/web build
+sudo systemctl restart morubi
+```
+
+---
+
+## 4. Extensão (Chrome Web Store)
+
+### 4.1 Build de produção
 1. Copie `apps/extension/.env.prod.example` para `apps/extension/.env.prod` e preencha:
-   - `WXT_API_BASE_URL` = a URL da Vercel (ou seu domínio).
+   - `WXT_API_BASE_URL` = `https://app.SEU-DOMINIO.com.br` (a URL do servidor).
    - `WXT_SUPABASE_URL` / `WXT_SUPABASE_ANON_KEY` = do projeto Supabase de produção.
-2. Se usar **domínio próprio** (ex.: `app.morubi.com`), troque em `apps/extension/wxt.config.ts`
-   a linha `"https://*.vercel.app/*"` por `"https://app.morubi.com/*"`. Com a URL padrão da
-   Vercel (`*.vercel.app`) já funciona sem mexer.
+2. Em `apps/extension/wxt.config.ts`, troque a linha `"https://*.vercel.app/*"` por
+   `"https://app.SEU-DOMINIO.com.br/*"` (a extensão precisa de permissão para falar com a sua API).
 3. Gere o pacote:
    ```bash
    pnpm --filter @morubi/extension zip:prod
    ```
    O `.zip` sai em `apps/extension/.output/`.
 
-### 3.2 Publicação
+### 4.2 Publicação
 1. Crie uma conta de desenvolvedor no [Chrome Web Store Dashboard](https://chrome.google.com/webstore/devconsole) (taxa única de US$ 5).
 2. **New item** → suba o `.zip`.
 3. **Privacy**:
-   - **Privacy policy URL**: `https://SUA-URL-DA-VERCEL/privacy` (a página já existe no app).
+   - **Privacy policy URL**: `https://app.SEU-DOMINIO.com.br/privacy` (a página já existe no app).
    - **Single purpose**: "Assistir o vendedor durante o atendimento, sugerindo o próximo passo
      da venda a partir da conversa aberta na tela."
    - **Permissions justification**:
@@ -93,20 +232,20 @@ Ao final você terá uma URL tipo `https://morubi-xxxx.vercel.app` (ou seu domí
 
 ---
 
-## 4. E-mail (convite de vendedor e recuperação de senha)
+## 5. E-mail (convite de vendedor e recuperação de senha)
 
-O sistema já funciona **sem** configurar nada: se o e-mail não sair, o convite cai
-automaticamente na **senha temporária** exibida na tela para o gestor repassar.
+O sistema já funciona **sem** configurar nada: se o e-mail não sair, o convite cai automaticamente
+na **senha temporária** exibida na tela para o gestor repassar.
 
-Para o convite sair por e-mail de verdade (o vendedor clica no link e define a própria
-senha), configure o SMTP no Supabase:
+Para o convite sair por e-mail de verdade (o vendedor clica no link e define a própria senha),
+configure o SMTP no Supabase:
 
 1. Supabase → **Project Settings → Authentication → SMTP Settings** → *Enable Custom SMTP*.
 2. Preencha com um provedor de envio (Resend, SendGrid, Amazon SES, Mailgun, Brevo...):
    host, porta, usuário, senha, e o **remetente** (ex.: `nao-responda@suaempresa.com.br`).
 3. Em **Authentication → URL Configuration**:
-   - **Site URL**: a URL do seu deploy (ex.: `https://morubi.vercel.app`).
-   - **Redirect URLs**: adicione `https://SUA-URL/auth/callback`.
+   - **Site URL**: `https://app.SEU-DOMINIO.com.br`.
+   - **Redirect URLs**: adicione `https://app.SEU-DOMINIO.com.br/auth/callback`.
      Sem isso, o link do e-mail é recusado por segurança.
 4. Em **Authentication → Email Templates**, dá para personalizar os textos de
    "Invite user" e "Reset password".
@@ -121,19 +260,25 @@ Fluxos que passam a funcionar:
 
 ---
 
-## 5. Checklist pós-deploy
+## 6. Checklist pós-deploy
 
-- [ ] `https://SUA-URL/login` abre e o cadastro de gestor funciona.
-- [ ] `https://SUA-URL/privacy` abre (URL da política de privacidade).
-- [ ] Dashboard carrega sem erro de conexão (Prisma) — se der erro de binário, confira o
-      `binaryTargets` no `schema.prisma` e refaça o deploy.
-- [ ] Extensão de produção loga e analisa uma conversa real (chamando a API da Vercel).
-- [ ] Se a análise cortar por timeout, subir para o plano Pro da Vercel.
+- [ ] `systemctl status morubi` mostra **active (running)**.
+- [ ] `https://app.SEU-DOMINIO.com.br/login` abre e o cadastro de gestor funciona.
+- [ ] `https://app.SEU-DOMINIO.com.br/privacy` abre (URL da política de privacidade).
+- [ ] Dashboard carrega sem erro de conexão com o Supabase.
+- [ ] Extensão de produção loga e analisa uma conversa real (chamando a sua API).
+- [ ] Uma análise real completa sem cortar (na VM não há timeout de função como na Vercel).
+- [ ] `curl` no `/api/cron/coaching` com o header do CRON_SECRET responde 200.
+
+Logs em tempo real: `journalctl -u morubi -f`.
 
 ---
 
 ## Variáveis extras (opcionais)
 
 - `SENTRY_DSN` / `NEXT_PUBLIC_SENTRY_DSN` — observabilidade. Sem elas, o Sentry fica inerte.
-- `CRON_SECRET` — protege `/api/cron/coaching`. Defina na Vercel e o cron passa a exigir
-  `Authorization: Bearer <valor>` (a Vercel envia automaticamente).
+- `CRON_SECRET` — protege `/api/cron/coaching`. Defina no `.env.local` e use o mesmo valor no
+  header `Authorization: Bearer <valor>` do crontab (passo 3.6).
+
+> O arquivo `apps/web/vercel.json` no repositório é ignorado neste deploy (só vale se um dia você
+> usar a Vercel). Pode deixá-lo como está.

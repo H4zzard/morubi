@@ -147,7 +147,7 @@ export type UserListResponse = z.infer<typeof UserListResponseSchema>;
 
 // --- /api/conversations ---
 // Um valor por adaptador de canal na extensão (packages/extension/.../adapters).
-export const ChannelSchema = z.enum(["whatsapp_web", "kentro"]);
+export const ChannelSchema = z.enum(["whatsapp_web", "kentro", "zpro", "generic"]);
 export type Channel = z.infer<typeof ChannelSchema>;
 
 export const UpsertConversationRequestSchema = z.object({
